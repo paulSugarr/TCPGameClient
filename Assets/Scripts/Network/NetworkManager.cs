@@ -2,6 +2,9 @@
 using System.Collections.Generic;
 using System.Net.Sockets;
 using UnityEngine;
+using System;
+using System.Threading;
+using System.Text;
 
 namespace Networking
 {
@@ -44,51 +47,67 @@ namespace Networking
         private const string host = "127.0.0.1";
         private const int port = 8888;
         private TcpClient _client;
-        private NetworkStream _stream;
+        private Thread clientReceiveThread;
         private int _id;
         public static int Id { get => Instance._id; set => Instance._id = value; }
         private void Start()
         {
-            StartCoroutine(NetworkProcess());
+            Connection();
         }
-        private IEnumerator NetworkProcess()
+        private void Connection()
         {
-            _client = new TcpClient();
-            _client.Connect(host, port);
-            _stream = _client.GetStream();
-            Debug.Log("!");
-            while (true)
+            try
             {
-
-                byte[] data = new byte[64]; // буфер для получаемых данных
-                int bytes = 0;
-                while (_stream.DataAvailable)
-                {
-                    try
-                    {
-                        bytes = _stream.Read(data, 0, data.Length);
-                    }
-                    catch
-                    {
-                        Debug.Log("Подключение прервано!");
-                        Disconnect();
-                        break;
-                    }
-                    yield return null;
-                }
-
-                CommandManager.TryExecute(data);
-
-                yield return null;
+                clientReceiveThread = new Thread(new ThreadStart(ListenForData));
+                clientReceiveThread.IsBackground = true;
+                clientReceiveThread.Start();
             }
+            catch (Exception e)
+            {
+                Debug.Log("On client connect exception " + e);
+            }
+        }
+
+        private void ListenForData()
+        {
+            try
+            {
+                _client = new TcpClient();
+                _client.Connect(host, port);
+                byte[] bytes = new byte[64];
+                while (true)
+                {
+                    // Get a stream object for reading 				
+                    using (NetworkStream stream = _client.GetStream())
+                    {
+                        int length;
+                        // Read incomming stream into byte arrary. 					
+                        while ((length = stream.Read(bytes, 0, bytes.Length)) != 0)
+                        {
+                            var incommingData = new byte[length];
+                            Array.Copy(bytes, 0, incommingData, 0, length);
+                            // Convert byte array to string message. 						
+                            CommandManager.TryExecute(bytes);
+                        }
+                    }
+                }
+            }
+            catch (SocketException socketException)
+            {
+                Disconnect();
+                Debug.LogError("Socket exception: " + socketException);
+            }
+        }
+
+        private void OnDestroy()
+        {
+            Disconnect();
         }
         private void Disconnect()
         {
-            if (_stream != null)
-                _stream.Close();//отключение потока
             if (_client != null)
-                _client.Close();//отключение клиента
-            //Environment.Exit(0); //завершение процесса
+                _client.Close();
+            clientReceiveThread.Abort();
         }
     }
 }
